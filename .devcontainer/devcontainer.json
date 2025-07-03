@@ -1,14 +1,10 @@
 {
   "name": "Data Science Classroom",
-  "image": "mcr.microsoft.com/devcontainers/universal:2-linux",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
   
   "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.11",
-      "installTools": true
-    },
     "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
+      "version": "18"
     },
     "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {}
