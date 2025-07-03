@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Database
+*.db
+*.sqlite
+
+# Data files (uncomment to ignore large datasets)
+# data/raw/*
+# data/processed/*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/settings.json
+.vscode/launch.json
+
+# R
+.Rhistory
+.RData
+.Ruserdata
