@@ -1,439 +1,350 @@
 #!/bin/bash
 
-# Dev Container Setup Script for Data Science Classroom
-# This runs once when the container is created
+echo "🎓 Setting up Data Science Classroom environment..."
+echo "Installing R, PostgreSQL, Python packages, and databases for students..."
 
-set -e
+# Set non-interactive mode to prevent hanging prompts
+export DEBIAN_FRONTEND=noninteractive
 
-echo "🚀 Setting up Data Science Environment in Codespace..."
-echo "======================================================"
+# Function to run commands with timeout and retry
+run_with_timeout() {
+    local max_attempts=3
+    local timeout_duration=600  # 10 minutes per attempt
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "Attempt $attempt of $max_attempts..."
+        if timeout $timeout_duration "$@"; then
+            echo "✅ Command succeeded on attempt $attempt"
+            return 0
+        else
+            echo "⚠️ Command failed on attempt $attempt"
+            if [ $attempt -lt $max_attempts ]; then
+                echo "Retrying in 10 seconds..."
+                sleep 10
+            fi
+        fi
+        ((attempt++))
+    done
+    
+    echo "❌ Command failed after $max_attempts attempts"
+    return 1
+}
 
-# Update system packages
-echo "📦 Updating system packages..."
-sudo apt-get update && sudo apt-get upgrade -y
+# Update package list
+echo "📦 Updating package list..."
+run_with_timeout sudo apt-get update -y
 
-# Install additional system dependencies
+# Install system dependencies first
 echo "🔧 Installing system dependencies..."
-sudo apt-get install -y \
+run_with_timeout sudo apt-get install -y \
     build-essential \
-    libcurl4-openssl-dev \
-    libssl-dev \
-    libxml2-dev \
-    libfontconfig1-dev \
-    libharfbuzz-dev \
-    libfribidi-dev \
-    libfreetype6-dev \
-    libpng-dev \
-    libtiff5-dev \
-    libjpeg-dev \
-    unzip \
-    tree \
-    htop \
-    jq \
+    curl \
+    wget \
+    git \
+    software-properties-common \
+    apt-transport-https \
+    ca-certificates \
+    gnupg \
+    lsb-release
+
+# Install database clients
+echo "🗄️ Installing database clients..."
+run_with_timeout sudo apt-get install -y \
     postgresql-client \
-    sqlite3
+    mysql-client \
+    sqlite3 \
+    redis-tools
 
-# Install PostgreSQL
-echo "🐘 Installing PostgreSQL..."
-sudo apt-get install -y postgresql postgresql-contrib
-sudo service postgresql start
+# Install R (the part that often hangs)
+echo "📊 Installing R and R packages..."
+# Add CRAN repository for latest R
+wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | sudo tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc
+echo "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/" | sudo tee -a /etc/apt/sources.list
 
-# Configure PostgreSQL for Codespace
-echo "⚙️ Configuring PostgreSQL..."
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+run_with_timeout sudo apt-get update -y
+run_with_timeout sudo apt-get install -y r-base r-base-dev
 
-# Get unique identifier for this student
-if [ ! -z "$GITHUB_USER" ]; then
-    STUDENT_ID="$GITHUB_USER"
-elif [ ! -z "$CODESPACE_NAME" ]; then
-    STUDENT_ID=$(echo "$CODESPACE_NAME" | cut -d'-' -f1)
-else
-    STUDENT_ID="student$(date +%s)"
-fi
+# Install R packages (this is often the slowest part)
+echo "📈 Installing R packages for data science..."
+cat > /tmp/install_r_packages.R << 'EOF'
+# Install packages with timeout and error handling
+install_with_retry <- function(pkg) {
+    tryCatch({
+        if (!require(pkg, character.only = TRUE)) {
+            install.packages(pkg, repos='https://cran.rstudio.com/', dependencies=TRUE)
+            library(pkg, character.only = TRUE)
+        }
+        cat("✅ Installed:", pkg, "\n")
+        return(TRUE)
+    }, error = function(e) {
+        cat("❌ Failed to install:", pkg, "-", e$message, "\n")
+        return(FALSE)
+    })
+}
 
-# Convert to lowercase and remove special characters
-STUDENT_ID=$(echo "$STUDENT_ID" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
-DB_NAME="${STUDENT_ID}_db"
-DB_USER="$STUDENT_ID"
-DB_PASSWORD="${STUDENT_ID}_$(openssl rand -hex 4)"
+# Essential R packages for data science classroom
+packages <- c(
+    'DBI', 'RPostgreSQL', 'RMySQL', 'RSQLite',
+    'dplyr', 'ggplot2', 'tidyr', 'readr', 'tibble',
+    'lubridate', 'stringr', 'forcats', 'purrr',
+    'knitr', 'rmarkdown', 'devtools'
+)
 
-echo "Creating database for student: $STUDENT_ID"
+for (pkg in packages) {
+    install_with_retry(pkg)
+}
 
-# Create user and database
-sudo -u postgres createuser --createdb --login "$DB_USER" 2>/dev/null || echo "User '$DB_USER' already exists"
-sudo -u postgres psql -c "ALTER USER $DB_USER PASSWORD '$DB_PASSWORD';"
-sudo -u postgres createdb "$DB_NAME" --owner="$DB_USER" 2>/dev/null || echo "Database '$DB_NAME' already exists"
-
-# Grant necessary permissions
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
-sudo -u postgres psql -c "ALTER USER $DB_USER CREATEDB;"
-
-# Store credentials
-cat > ~/.pg_credentials << EOF
-export PGHOST=localhost
-export PGPORT=5432
-export PGDATABASE=$DB_NAME
-export PGUSER=$DB_USER
-export PGPASSWORD=$DB_PASSWORD
+cat("🎉 R package installation complete!\n")
 EOF
 
-echo "✅ PostgreSQL configured for student: $STUDENT_ID"
+run_with_timeout sudo Rscript /tmp/install_r_packages.R
 
-# Install Python packages
-echo "🐍 Installing Python data science packages..."
-pip install --upgrade pip setuptools wheel
+# Install Python packages for data science
+echo "🐍 Installing Python packages for data science..."
+run_with_timeout pip install --no-cache-dir --upgrade pip
 
-# Core data science packages
-pip install \
-    jupyter \
-    jupyterlab \
-    notebook \
+# Install in chunks to avoid memory issues
+echo "Installing database connectivity packages..."
+run_with_timeout pip install --no-cache-dir \
+    psycopg2-binary \
+    PyMySQL \
+    sqlalchemy
+
+echo "Installing core data science packages..."
+run_with_timeout pip install --no-cache-dir \
     pandas \
     numpy \
-    scipy \
     matplotlib \
-    seaborn \
-    plotly \
-    bokeh \
-    altair \
+    seaborn
+
+echo "Installing additional analysis packages..."
+run_with_timeout pip install --no-cache-dir \
     scikit-learn \
-    statsmodels \
-    tensorflow \
-    torch \
-    transformers \
-    xgboost \
-    lightgbm \
-    catboost
+    scipy \
+    plotly \
+    jupyter \
+    notebook
 
-# Database packages
-pip install \
-    sqlalchemy \
-    psycopg2-binary \
-    pymongo \
-    redis
-
-# Additional packages
-pip install \
+echo "Installing utility packages..."
+run_with_timeout pip install --no-cache-dir \
     requests \
     beautifulsoup4 \
     openpyxl \
-    xlrd \
-    pyyaml \
-    python-dotenv \
-    streamlit \
-    dash \
-    fastapi \
-    uvicorn \
-    black \
-    flake8 \
-    pytest \
-    ipykernel \
-    jupyter-dash \
-    jupyterlab-git \
-    ipywidgets
+    xlrd
 
-# Install R packages
-echo "📈 Installing R packages..."
-sudo Rscript -e "
-if (!require('pacman', quietly = TRUE)) install.packages('pacman', repos='https://cran.rstudio.com/')
-pacman::p_load(
-    tidyverse,
-    dplyr,
-    ggplot2,
-    plotly,
-    shiny,
-    shinydashboard,
-    DT,
-    leaflet,
-    rmarkdown,
-    knitr,
-    devtools,
-    here,
-    janitor,
-    lubridate,
-    readxl,
-    writexl,
-    jsonlite,
-    httr,
-    rvest,
-    DBI,
-    RPostgreSQL,
-    RSQLite,
-    dbplyr,
-    caret,
-    randomForest,
-    xgboost,
-    tidymodels,
-    update = FALSE
+# Create workspace structure for classroom
+echo "📁 Creating classroom workspace structure..."
+mkdir -p /workspaces/data-managment/{notebooks,datasets,scripts,projects,assignments}
+mkdir -p /workspaces/data-managment/databases
+
+# Create database startup script
+cat > /workspaces/data-managment/scripts/start_classroom_db.sh << 'EOF'
+#!/bin/bash
+
+echo "🎓 Starting PostgreSQL for Data Science Classroom..."
+
+# Check if Docker is available
+if ! command -v docker &> /dev/null; then
+    echo "❌ Docker not available. Installing Docker..."
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    sudo usermod -aG docker $USER
+fi
+
+# Remove existing container if it exists
+docker rm -f classroom-postgres 2>/dev/null || true
+
+echo "🚀 Starting PostgreSQL with classroom databases..."
+docker run -d \
+    --name classroom-postgres \
+    --restart unless-stopped \
+    -p 5432:5432 \
+    -e POSTGRES_USER=student \
+    -e POSTGRES_PASSWORD=student_password \
+    -e POSTGRES_DB=postgres \
+    -v /workspaces/data-managment/databases:/docker-entrypoint-initdb.d:ro \
+    -v classroom-data:/var/lib/postgresql/data \
+    postgres:15
+
+# Start pgAdmin for students
+docker rm -f classroom-pgadmin 2>/dev/null || true
+docker run -d \
+    --name classroom-pgadmin \
+    --restart unless-stopped \
+    -p 5050:80 \
+    -e PGADMIN_DEFAULT_EMAIL=teacher@classroom.com \
+    -e PGADMIN_DEFAULT_PASSWORD=classroom123 \
+    -e PGADMIN_CONFIG_SERVER_MODE=False \
+    dpage/pgadmin4:latest
+
+echo "⏳ Waiting for databases to start..."
+sleep 15
+
+echo "✅ Classroom databases are ready!"
+echo "📊 PostgreSQL: localhost:5432 (student/student_password)"
+echo "🌐 pgAdmin: http://localhost:5050 (teacher@classroom.com/classroom123)"
+EOF
+
+chmod +x /workspaces/data-managment/scripts/start_classroom_db.sh
+
+# Create student connection test script
+cat > /workspaces/data-managment/scripts/test_classroom_setup.py << 'EOF'
+#!/usr/bin/env python3
+"""Test all classroom components"""
+
+def test_python_packages():
+    print("🐍 Testing Python packages...")
+    try:
+        import pandas as pd
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        import sklearn
+        import psycopg2
+        import sqlalchemy
+        print("✅ All Python packages installed correctly")
+        return True
+    except ImportError as e:
+        print(f"❌ Python package missing: {e}")
+        return False
+
+def test_r_installation():
+    print("📊 Testing R installation...")
+    import subprocess
+    try:
+        result = subprocess.run(['R', '--version'], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print("✅ R is installed correctly")
+            return True
+        else:
+            print("❌ R installation issue")
+            return False
+    except Exception as e:
+        print(f"❌ R test failed: {e}")
+        return False
+
+def test_database_connection():
+    print("🗄️ Testing database connection...")
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host="localhost",
+            port="5432", 
+            database="postgres",
+            user="student",
+            password="student_password"
+        )
+        conn.close()
+        print("✅ Database connection successful")
+        return True
+    except Exception as e:
+        print(f"❌ Database connection failed: {e}")
+        print("💡 Run: bash /workspaces/data-managment/scripts/start_classroom_db.sh")
+        return False
+
+if __name__ == "__main__":
+    print("🎓 Testing Data Science Classroom Setup")
+    print("="*50)
+    
+    results = []
+    results.append(test_python_packages())
+    results.append(test_r_installation())
+    results.append(test_database_connection())
+    
+    print("="*50)
+    if all(results):
+        print("🎉 Classroom setup is complete and working!")
+        print("📚 Your students can now use Python, R, and PostgreSQL")
+    else:
+        print("⚠️ Some components need attention")
+        print("💡 Check the errors above and run setup again if needed")
+EOF
+
+chmod +x /workspaces/data-managment/scripts/test_classroom_setup.py
+
+# Create sample classroom assignment
+cat > /workspaces/data-managment/assignments/assignment_1_getting_started.md << 'EOF'
+# Assignment 1: Getting Started with the Data Science Environment
+
+## Objective
+Verify that your development environment is properly set up for data science work.
+
+## Tasks
+
+### 1. Test Python Setup
+Run the following in a Python script or Jupyter notebook:
+```python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Create a simple dataset
+data = pd.DataFrame({
+    'x': range(10),
+    'y': np.random.randn(10)
+})
+
+# Create a plot
+plt.figure(figsize=(8, 6))
+sns.scatterplot(data=data, x='x', y='y')
+plt.title('My First Plot')
+plt.show()
+```
+
+### 2. Test R Setup
+Create an R script with:
+```r
+library(dplyr)
+library(ggplot2)
+
+# Create sample data
+data <- data.frame(
+  x = 1:10,
+  y = rnorm(10)
 )
-"
 
-# Configure Jupyter with both Python and R kernels
-echo "🔧 Configuring Jupyter..."
-python -m ipykernel install --user --name=python3 --display-name="Python 3"
-
-# Install R kernel for Jupyter
-echo "📊 Installing R kernel for Jupyter..."
-sudo Rscript -e "
-install.packages('IRkernel', repos='https://cran.rstudio.com/')
-IRkernel::installspec(user = FALSE)
-"
-
-# Create Jupyter config for Codespace
-mkdir -p ~/.jupyter
-cat > ~/.jupyter/jupyter_lab_config.py << 'EOF'
-c.ServerApp.ip = '0.0.0.0'
-c.ServerApp.port = 8888
-c.ServerApp.open_browser = False
-c.ServerApp.token = ''
-c.ServerApp.password = ''
-c.ServerApp.allow_root = False
-c.ServerApp.allow_origin = '*'
-c.ServerApp.disable_check_xsrf = True
-EOF
-
-# Install RStudio Server
-echo "💻 Installing RStudio Server..."
-cd /tmp
-wget -q https://download2.rstudio.org/server/jammy/amd64/rstudio-server-2023.12.1-402-amd64.deb
-sudo dpkg -i rstudio-server-2023.12.1-402-amd64.deb || sudo apt-get install -f -y
-rm rstudio-server-2023.12.1-402-amd64.deb
-
-# Configure RStudio for Codespace
-sudo tee /etc/rstudio/rserver.conf > /dev/null << 'EOF'
-www-port=8787
-www-address=0.0.0.0
-auth-none=1
-auth-validate-users=0
-server-user=codespace
-EOF
-
-sudo systemctl enable rstudio-server
-sudo systemctl start rstudio-server
-
-# Create project structure
-echo "📁 Creating project structure..."
-mkdir -p /workspaces/$(basename $GITHUB_REPOSITORY)/{data,notebooks,scripts,docs,tests,assignments}
-mkdir -p /workspaces/$(basename $GITHUB_REPOSITORY)/data/{raw,processed,external}
-
-# Create database management script
-cat > /workspaces/$(basename $GITHUB_REPOSITORY)/db-manager.sh << 'EOF'
-#!/bin/bash
-
-# Database Management Helper Script for Codespace
-source ~/.pg_credentials 2>/dev/null || { echo "❌ Database credentials not found"; exit 1; }
-
-case "$1" in
-    "list")
-        echo "📋 Your databases:"
-        psql -h $PGHOST -p $PGPORT -U $PGUSER -d postgres -c "\l" | grep $PGUSER
-        ;;
-    "create")
-        if [ -z "$2" ]; then
-            echo "Usage: ./db-manager.sh create <database_name>"
-            exit 1
-        fi
-        DB_NAME="${PGUSER}_$2"
-        echo "🔨 Creating database: $DB_NAME"
-        createdb -h $PGHOST -p $PGPORT -U $PGUSER $DB_NAME
-        echo "✅ Database $DB_NAME created successfully!"
-        ;;
-    "connect")
-        if [ -z "$2" ]; then
-            psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE
-        else
-            DB_NAME="${PGUSER}_$2"
-            psql -h $PGHOST -p $PGPORT -U $PGUSER -d $DB_NAME
-        fi
-        ;;
-    *)
-        echo "Usage: ./db-manager.sh [list|create|connect] [database_name]"
-        ;;
-esac
-EOF
-
-chmod +x /workspaces/$(basename $GITHUB_REPOSITORY)/db-manager.sh
-
-# Create environment setup script
-cat > /workspaces/$(basename $GITHUB_REPOSITORY)/setup-env.sh << 'EOF'
-#!/bin/bash
-# Load database credentials and set up environment
-
-source ~/.pg_credentials
-
-echo "✅ Data Science Environment Ready!"
-echo "Database: $PGDATABASE | User: $PGUSER"
-echo ""
-echo "Quick commands:"
-echo "  jupyter lab --ip=0.0.0.0 --port=8888"
-echo "  ./db-manager.sh list"
-echo "  ./db-manager.sh create myproject"
-EOF
-
-chmod +x /workspaces/$(basename $GITHUB_REPOSITORY)/setup-env.sh
-
-# Create sample files
-cat > /workspaces/$(basename $GITHUB_REPOSITORY)/README.md << 'EOF'
-# Data Science Classroom Environment
-
-Welcome to your personal data science environment! This Codespace includes:
-
-## 🛠️ Available Tools
-- **Python 3.11** with comprehensive data science packages
-- **R** with tidyverse and statistical packages
-- **Jupyter Lab** - Access at port 8888
-- **RStudio Server** - Access at port 8787  
-- **PostgreSQL** - Your personal database server
-- **VSCode** with data science extensions
-
-## 🚀 Getting Started
-
-### 1. Setup Environment
-```bash
-./setup-env.sh
+# Create a plot
+ggplot(data, aes(x=x, y=y)) +
+  geom_point() +
+  labs(title="My First R Plot")
 ```
 
-### 2. Start Jupyter Lab
-```bash
-jupyter lab --ip=0.0.0.0 --port=8888
+### 3. Test Database Connection
+Run this Python script:
+```python
+import pandas as pd
+from sqlalchemy import create_engine
+
+# Connect to PostgreSQL
+engine = create_engine('postgresql://student:student_password@localhost:5432/postgres')
+
+# Test query
+result = pd.read_sql('SELECT version()', engine)
+print("Database version:", result.iloc[0,0])
 ```
 
-### 3. Access RStudio
-Click on the "Ports" tab and open port 8787
-
-### 4. Database Management
-```bash
-./db-manager.sh list                 # List your databases
-./db-manager.sh create assignment1   # Create new database
-./db-manager.sh connect assignment1  # Connect to database
-```
-
-## 📁 Project Structure
-```
-├── data/
-│   ├── raw/          # Raw data files
-│   ├── processed/    # Cleaned data
-│   └── external/     # External datasets
-├── notebooks/        # Jupyter notebooks  
-├── scripts/          # Python/R scripts
-├── assignments/      # Course assignments
-├── docs/            # Documentation
-└── tests/           # Test files
-```
-
-## 🔗 Useful Links
-- [Jupyter Lab](../../ports/8888) - Interactive notebooks
-- [RStudio](../../ports/8787) - R development environment
-
-Happy coding! 🎯
-EOF
-
-# Create sample notebook
-cat > /workspaces/$(basename $GITHUB_REPOSITORY)/notebooks/welcome.ipynb << 'EOF'
-{
- "cells": [
-  {
-   "cell_type": "markdown",
-   "metadata": {},
-   "source": [
-    "# Welcome to Your Data Science Environment! 🚀\n",
-    "\n",
-    "This notebook will help you test your environment setup."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Test Python packages\n",
-    "import pandas as pd\n",
-    "import numpy as np\n",
-    "import matplotlib.pyplot as plt\n",
-    "import seaborn as sns\n",
-    "from sqlalchemy import create_engine\n",
-    "import os\n",
-    "\n",
-    "print(\"✅ All imports successful!\")\n",
-    "print(f\"Pandas: {pd.__version__}\")\n",
-    "print(f\"NumPy: {np.__version__}\")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Test database connection\n",
-    "exec(open('/home/codespace/.pg_credentials').read())\n",
-    "\n",
-    "try:\n",
-    "    db_url = f\"postgresql://{os.environ['PGUSER']}:{os.environ['PGPASSWORD']}@{os.environ['PGHOST']}:{os.environ['PGPORT']}/{os.environ['PGDATABASE']}\"\n",
-    "    engine = create_engine(db_url)\n",
-    "    \n",
-    "    with engine.connect() as conn:\n",
-    "        result = conn.execute('SELECT version()')\n",
-    "        version = result.fetchone()[0]\n",
-    "        print(\"✅ Database connection successful!\")\n",
-    "        print(f\"Connected to: {os.environ['PGDATABASE']}\")\n",
-    "        print(f\"PostgreSQL version: {version.split(',')[0]}\")\n",
-    "        \n",
-    "except Exception as e:\n",
-    "    print(f\"❌ Database connection failed: {e}\")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# Create sample data and visualization\n",
-    "np.random.seed(42)\n",
-    "data = {\n",
-    "    'x': np.random.randn(100),\n",
-    "    'y': np.random.randn(100),\n",
-    "    'category': np.random.choice(['A', 'B', 'C'], 100)\n",
-    "}\n",
-    "\n",
-    "df = pd.DataFrame(data)\n",
-    "\n",
-    "plt.figure(figsize=(10, 6))\n",
-    "sns.scatterplot(data=df, x='x', y='y', hue='category')\n",
-    "plt.title('Sample Data Visualization')\n",
-    "plt.show()\n",
-    "\n",
-    "print(\"✅ Visualization working!\")"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "name": "python",
-   "version": "3.11.0"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 4
-}
+## Submission
+Screenshot your successful outputs for all three tasks.
 EOF
 
 echo ""
-echo "🎉 Data Science Environment Setup Complete!"
-echo "============================================="
+echo "🎉 Data Science Classroom setup complete!"
 echo ""
-echo "📋 What's been installed:"
-echo "  ✅ Python with data science packages"
-echo "  ✅ R with tidyverse"
-echo "  ✅ PostgreSQL database (student: $STUDENT_ID)"  
-echo "  ✅ Jupyter Lab (port 8888)"
-echo "  ✅ RStudio Server (port 8787)"
-echo "  ✅ VSCode extensions"
-echo "  ✅ Project struc
+echo "🎯 What's installed for your students:"
+echo "   ✅ Python with pandas, numpy, matplotlib, seaborn, scikit-learn"
+echo "   ✅ R with tidyverse, database connectors, and visualization packages"
+echo "   ✅ PostgreSQL client tools"
+echo "   ✅ Jupyter Lab for interactive notebooks"
+echo ""
+echo "📚 Next steps for classroom:"
+echo "1. Test setup: python /workspaces/data-managment/scripts/test_classroom_setup.py"
+echo "2. Start databases: bash /workspaces/data-managment/scripts/start_classroom_db.sh"
+echo "3. Add your database files to: /workspaces/data-managment/databases/"
+echo "4. Share assignment: /workspaces/data-managment/assignments/assignment_1_getting_started.md"
+echo ""
+echo "🔗 Access points for students:"
+echo "   • Jupyter Notebooks: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser"
+echo "   • pgAdmin: http://localhost:5050"
+echo "   • PostgreSQL: localhost:5432"
