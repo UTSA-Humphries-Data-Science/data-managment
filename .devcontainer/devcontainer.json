@@ -128,8 +128,7 @@
   "postCreateCommand": "bash .devcontainer/setup.sh",
   "postStartCommand": "bash .devcontainer/post-start.sh",
 
-  "remoteUser": "codespace",
-  "containerUser": "codespace",
+  "remoteUser": "vscode",
 
   "runArgs": [
     "--cap-add=SYS_PTRACE",
