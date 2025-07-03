@@ -7,9 +7,6 @@
       "version": "3.11",
       "installTools": true
     },
-    "ghcr.io/devcontainers/features/r-apt:1": {
-      "version": "latest"
-    },
     "ghcr.io/devcontainers/features/node:1": {
       "version": "lts"
     },
@@ -26,13 +23,24 @@
         "ms-python.mypy-type-checker",
         "ms-python.pylint",
         "ms-toolsai.jupyter",
+        "ms-toolsai.vscode-jupyter-cell-tags",
+        "ms-toolsai.vscode-jupyter-slideshow",
         "reditorsupport.r",
         "ikuyadeu.r-debugger",
         "ms-mssql.mssql",
         "ms-mssql.sql-database-projects-vscode",
+        "ms-mssql.data-workspace-vscode",
+        "ms-azuretools.vscode-azurefunctions",
+        "ms-azuretools.vscode-azureresourcegroups",
+        "ms-azuretools.vscode-azurestorage",
+        "ms-azuretools.vscode-cosmosdb",
+        "ms-vscode.azure-account",
         "mtxr.sqltools",
         "mtxr.sqltools-driver-pg",
         "mtxr.sqltools-driver-sqlite",
+        "mtxr.sqltools-driver-mssql",
+        "mtxr.sqltools-driver-mysql",
+        "koszti.dotnet-test-explorer",
         "mechatroner.rainbow-csv",
         "janisdd.vscode-edit-csv",
         "ms-vscode.hexeditor",
@@ -50,7 +58,11 @@
         "eamodio.gitlens",
         "ms-vscode.live-server",
         "christian-kohler.path-intellisense",
-        "formulahendry.auto-rename-tag"
+        "formulahendry.auto-rename-tag",
+        "visualstudioexptteam.vscodeintellicode",
+        "ms-python.isort",
+        "donjayamanne.githistory",
+        "ms-vscode.powershell"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/python/current/bin/python",
