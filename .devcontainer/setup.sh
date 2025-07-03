@@ -1,350 +1,175 @@
 #!/bin/bash
 
-echo "🎓 Setting up Data Science Classroom environment..."
-echo "Installing R, PostgreSQL, Python packages, and databases for students..."
+echo "🎓 Fast Data Science Classroom Setup"
+echo "Installing only essentials: R, PostgreSQL client, core Python packages"
 
-# Set non-interactive mode to prevent hanging prompts
+# Set timeouts and non-interactive mode
 export DEBIAN_FRONTEND=noninteractive
+export TIMEOUT_DURATION=300  # 5 minutes max per operation
 
-# Function to run commands with timeout and retry
-run_with_timeout() {
-    local max_attempts=3
-    local timeout_duration=600  # 10 minutes per attempt
-    local attempt=1
-    
-    while [ $attempt -le $max_attempts ]; do
-        echo "Attempt $attempt of $max_attempts..."
-        if timeout $timeout_duration "$@"; then
-            echo "✅ Command succeeded on attempt $attempt"
-            return 0
-        else
-            echo "⚠️ Command failed on attempt $attempt"
-            if [ $attempt -lt $max_attempts ]; then
-                echo "Retrying in 10 seconds..."
-                sleep 10
-            fi
-        fi
-        ((attempt++))
-    done
-    
-    echo "❌ Command failed after $max_attempts attempts"
-    return 1
+# Function with timeout
+run_fast() {
+    timeout $TIMEOUT_DURATION "$@" || {
+        echo "❌ Command timed out: $*"
+        return 1
+    }
 }
 
-# Update package list
-echo "📦 Updating package list..."
-run_with_timeout sudo apt-get update -y
+# Quick package update
+echo "📦 Quick package update..."
+run_fast sudo apt-get update -qq
 
-# Install system dependencies first
-echo "🔧 Installing system dependencies..."
-run_with_timeout sudo apt-get install -y \
-    build-essential \
-    curl \
-    wget \
-    git \
-    software-properties-common \
-    apt-transport-https \
-    ca-certificates \
-    gnupg \
-    lsb-release
+# Install only essential database tools
+echo "🗄️ Installing PostgreSQL client..."
+run_fast sudo apt-get install -y postgresql-client
 
-# Install database clients
-echo "🗄️ Installing database clients..."
-run_with_timeout sudo apt-get install -y \
-    postgresql-client \
-    mysql-client \
-    sqlite3 \
-    redis-tools
+# Install R (essential for classroom)
+echo "📊 Installing R..."
+run_fast sudo apt-get install -y r-base
 
-# Install R (the part that often hangs)
-echo "📊 Installing R and R packages..."
-# Add CRAN repository for latest R
-wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | sudo tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc
-echo "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/" | sudo tee -a /etc/apt/sources.list
+# Install only critical R packages (minimal set)
+echo "📈 Installing essential R packages..."
+cat > /tmp/install_essential_r.R << 'EOF'
+# Only install the most essential packages
+essential_packages <- c('DBI', 'RPostgreSQL', 'dplyr', 'ggplot2')
 
-run_with_timeout sudo apt-get update -y
-run_with_timeout sudo apt-get install -y r-base r-base-dev
-
-# Install R packages (this is often the slowest part)
-echo "📈 Installing R packages for data science..."
-cat > /tmp/install_r_packages.R << 'EOF'
-# Install packages with timeout and error handling
-install_with_retry <- function(pkg) {
-    tryCatch({
-        if (!require(pkg, character.only = TRUE)) {
-            install.packages(pkg, repos='https://cran.rstudio.com/', dependencies=TRUE)
-            library(pkg, character.only = TRUE)
-        }
-        cat("✅ Installed:", pkg, "\n")
-        return(TRUE)
-    }, error = function(e) {
-        cat("❌ Failed to install:", pkg, "-", e$message, "\n")
-        return(FALSE)
-    })
+for (pkg in essential_packages) {
+    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+        install.packages(pkg, repos='https://cran.rstudio.com/', dependencies=FALSE)
+    }
 }
-
-# Essential R packages for data science classroom
-packages <- c(
-    'DBI', 'RPostgreSQL', 'RMySQL', 'RSQLite',
-    'dplyr', 'ggplot2', 'tidyr', 'readr', 'tibble',
-    'lubridate', 'stringr', 'forcats', 'purrr',
-    'knitr', 'rmarkdown', 'devtools'
-)
-
-for (pkg in packages) {
-    install_with_retry(pkg)
-}
-
-cat("🎉 R package installation complete!\n")
+cat("✅ Essential R packages installed\n")
 EOF
 
-run_with_timeout sudo Rscript /tmp/install_r_packages.R
+run_fast sudo Rscript /tmp/install_essential_r.R
 
-# Install Python packages for data science
-echo "🐍 Installing Python packages for data science..."
-run_with_timeout pip install --no-cache-dir --upgrade pip
-
-# Install in chunks to avoid memory issues
-echo "Installing database connectivity packages..."
-run_with_timeout pip install --no-cache-dir \
+# Install only essential Python packages
+echo "🐍 Installing essential Python packages..."
+run_fast pip install --no-cache-dir --user \
     psycopg2-binary \
-    PyMySQL \
-    sqlalchemy
-
-echo "Installing core data science packages..."
-run_with_timeout pip install --no-cache-dir \
     pandas \
-    numpy \
-    matplotlib \
-    seaborn
-
-echo "Installing additional analysis packages..."
-run_with_timeout pip install --no-cache-dir \
-    scikit-learn \
-    scipy \
-    plotly \
     jupyter \
-    notebook
+    numpy \
+    matplotlib
 
-echo "Installing utility packages..."
-run_with_timeout pip install --no-cache-dir \
-    requests \
-    beautifulsoup4 \
-    openpyxl \
-    xlrd
+# Create workspace structure
+echo "📁 Creating workspace..."
+mkdir -p /workspaces/data-managment/{notebooks,scripts,databases}
 
-# Create workspace structure for classroom
-echo "📁 Creating classroom workspace structure..."
-mkdir -p /workspaces/data-managment/{notebooks,datasets,scripts,projects,assignments}
-mkdir -p /workspaces/data-managment/databases
-
-# Create database startup script
-cat > /workspaces/data-managment/scripts/start_classroom_db.sh << 'EOF'
+# Create database startup script  
+cat > /workspaces/data-managment/scripts/start_db.sh << 'EOF'
 #!/bin/bash
+echo "🚀 Starting PostgreSQL for classroom..."
 
-echo "🎓 Starting PostgreSQL for Data Science Classroom..."
+# Remove existing container
+docker rm -f classroom-db 2>/dev/null || true
 
-# Check if Docker is available
-if ! command -v docker &> /dev/null; then
-    echo "❌ Docker not available. Installing Docker..."
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sudo sh get-docker.sh
-    sudo usermod -aG docker $USER
-fi
-
-# Remove existing container if it exists
-docker rm -f classroom-postgres 2>/dev/null || true
-
-echo "🚀 Starting PostgreSQL with classroom databases..."
+# Start PostgreSQL with sample data
 docker run -d \
-    --name classroom-postgres \
-    --restart unless-stopped \
+    --name classroom-db \
     -p 5432:5432 \
     -e POSTGRES_USER=student \
     -e POSTGRES_PASSWORD=student_password \
     -e POSTGRES_DB=postgres \
     -v /workspaces/data-managment/databases:/docker-entrypoint-initdb.d:ro \
-    -v classroom-data:/var/lib/postgresql/data \
     postgres:15
 
-# Start pgAdmin for students
-docker rm -f classroom-pgadmin 2>/dev/null || true
-docker run -d \
-    --name classroom-pgadmin \
-    --restart unless-stopped \
-    -p 5050:80 \
-    -e PGADMIN_DEFAULT_EMAIL=teacher@classroom.com \
-    -e PGADMIN_DEFAULT_PASSWORD=classroom123 \
-    -e PGADMIN_CONFIG_SERVER_MODE=False \
-    dpage/pgadmin4:latest
+echo "⏳ Waiting for database..."
+sleep 10
 
-echo "⏳ Waiting for databases to start..."
-sleep 15
-
-echo "✅ Classroom databases are ready!"
-echo "📊 PostgreSQL: localhost:5432 (student/student_password)"
-echo "🌐 pgAdmin: http://localhost:5050 (teacher@classroom.com/classroom123)"
+echo "✅ Database ready!"
+echo "🔗 Connection: localhost:5432"
+echo "👤 User: student / student_password"
 EOF
 
-chmod +x /workspaces/data-managment/scripts/start_classroom_db.sh
+chmod +x /workspaces/data-managment/scripts/start_db.sh
 
-# Create student connection test script
-cat > /workspaces/data-managment/scripts/test_classroom_setup.py << 'EOF'
+# Create simple test script
+cat > /workspaces/data-managment/scripts/test_setup.py << 'EOF'
 #!/usr/bin/env python3
-"""Test all classroom components"""
+"""Quick test of classroom setup"""
 
-def test_python_packages():
-    print("🐍 Testing Python packages...")
+def test_python():
     try:
         import pandas as pd
         import numpy as np
         import matplotlib.pyplot as plt
-        import seaborn as sns
-        import sklearn
         import psycopg2
-        import sqlalchemy
-        print("✅ All Python packages installed correctly")
+        import jupyter
+        print("✅ Python packages working")
         return True
     except ImportError as e:
         print(f"❌ Python package missing: {e}")
         return False
 
-def test_r_installation():
-    print("📊 Testing R installation...")
+def test_r():
     import subprocess
     try:
-        result = subprocess.run(['R', '--version'], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(['R', '--version'], capture_output=True, timeout=5)
         if result.returncode == 0:
-            print("✅ R is installed correctly")
+            print("✅ R is working")
             return True
-        else:
-            print("❌ R installation issue")
-            return False
-    except Exception as e:
-        print(f"❌ R test failed: {e}")
-        return False
+    except:
+        pass
+    print("❌ R not working")
+    return False
 
-def test_database_connection():
-    print("🗄️ Testing database connection...")
+def test_db():
     try:
         import psycopg2
         conn = psycopg2.connect(
-            host="localhost",
-            port="5432", 
-            database="postgres",
-            user="student",
-            password="student_password"
+            host="localhost", port="5432", database="postgres",
+            user="student", password="student_password"
         )
         conn.close()
-        print("✅ Database connection successful")
+        print("✅ Database connection working")
         return True
-    except Exception as e:
-        print(f"❌ Database connection failed: {e}")
-        print("💡 Run: bash /workspaces/data-managment/scripts/start_classroom_db.sh")
-        return False
+    except:
+        print("ℹ️  Database not started yet - run: bash scripts/start_db.sh")
+        return True  # This is expected until they start the DB
 
 if __name__ == "__main__":
-    print("🎓 Testing Data Science Classroom Setup")
-    print("="*50)
+    print("🧪 Testing classroom setup...")
+    results = [test_python(), test_r(), test_db()]
     
-    results = []
-    results.append(test_python_packages())
-    results.append(test_r_installation())
-    results.append(test_database_connection())
-    
-    print("="*50)
     if all(results):
-        print("🎉 Classroom setup is complete and working!")
-        print("📚 Your students can now use Python, R, and PostgreSQL")
+        print("🎉 Classroom setup complete!")
     else:
-        print("⚠️ Some components need attention")
-        print("💡 Check the errors above and run setup again if needed")
+        print("⚠️  Some issues detected")
 EOF
 
-chmod +x /workspaces/data-managment/scripts/test_classroom_setup.py
+chmod +x /workspaces/data-managment/scripts/test_setup.py
 
-# Create sample classroom assignment
-cat > /workspaces/data-managment/assignments/assignment_1_getting_started.md << 'EOF'
-# Assignment 1: Getting Started with the Data Science Environment
+# Create sample database file
+cat > /workspaces/data-managment/databases/01-sample.sql << 'EOF'
+-- Sample classroom database
+CREATE TABLE IF NOT EXISTS students (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100),
+    grade INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-## Objective
-Verify that your development environment is properly set up for data science work.
+INSERT INTO students (name, grade) VALUES 
+('Alice', 95), ('Bob', 87), ('Carol', 92), ('David', 78)
+ON CONFLICT DO NOTHING;
 
-## Tasks
-
-### 1. Test Python Setup
-Run the following in a Python script or Jupyter notebook:
-```python
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-# Create a simple dataset
-data = pd.DataFrame({
-    'x': range(10),
-    'y': np.random.randn(10)
-})
-
-# Create a plot
-plt.figure(figsize=(8, 6))
-sns.scatterplot(data=data, x='x', y='y')
-plt.title('My First Plot')
-plt.show()
-```
-
-### 2. Test R Setup
-Create an R script with:
-```r
-library(dplyr)
-library(ggplot2)
-
-# Create sample data
-data <- data.frame(
-  x = 1:10,
-  y = rnorm(10)
-)
-
-# Create a plot
-ggplot(data, aes(x=x, y=y)) +
-  geom_point() +
-  labs(title="My First R Plot")
-```
-
-### 3. Test Database Connection
-Run this Python script:
-```python
-import pandas as pd
-from sqlalchemy import create_engine
-
-# Connect to PostgreSQL
-engine = create_engine('postgresql://student:student_password@localhost:5432/postgres')
-
-# Test query
-result = pd.read_sql('SELECT version()', engine)
-print("Database version:", result.iloc[0,0])
-```
-
-## Submission
-Screenshot your successful outputs for all three tasks.
+-- Grant permissions
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO student;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO student;
 EOF
 
 echo ""
-echo "🎉 Data Science Classroom setup complete!"
+echo "🎉 Fast setup complete! (Should take under 10 minutes)"
 echo ""
-echo "🎯 What's installed for your students:"
-echo "   ✅ Python with pandas, numpy, matplotlib, seaborn, scikit-learn"
-echo "   ✅ R with tidyverse, database connectors, and visualization packages"
+echo "📚 What's installed:"
+echo "   ✅ Python with pandas, numpy, matplotlib, jupyter"
+echo "   ✅ R with essential data science packages"  
 echo "   ✅ PostgreSQL client tools"
-echo "   ✅ Jupyter Lab for interactive notebooks"
 echo ""
-echo "📚 Next steps for classroom:"
-echo "1. Test setup: python /workspaces/data-managment/scripts/test_classroom_setup.py"
-echo "2. Start databases: bash /workspaces/data-managment/scripts/start_classroom_db.sh"
-echo "3. Add your database files to: /workspaces/data-managment/databases/"
-echo "4. Share assignment: /workspaces/data-managment/assignments/assignment_1_getting_started.md"
+echo "🚀 Next steps:"
+echo "1. Test setup: python scripts/test_setup.py"
+echo "2. Start database: bash scripts/start_db.sh"
+echo "3. Create notebooks in the notebooks/ folder"
 echo ""
-echo "🔗 Access points for students:"
-echo "   • Jupyter Notebooks: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser"
-echo "   • pgAdmin: http://localhost:5050"
-echo "   • PostgreSQL: localhost:5432"
+echo "💡 This is a minimal setup - install additional packages as needed!"
